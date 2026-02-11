@@ -9,11 +9,13 @@
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/input/input.h>
 #include <zmk/behavior.h>
 #include <zmk/behavior_queue.h>
 #include <zmk/events/hid_indicators_changed.h>
 #include <zmk/events/layer_state_changed.h>
 #include <zmk/keymap.h>
+#include <zmk/activity.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -41,6 +43,7 @@ struct interface_data {
 
     enum interface_input_mode curr_mode;
     bool automouse_enabled;
+    struct k_work_delayable activate_automouse_layer_delayed;
     struct k_work_delayable deactivate_automouse_layer_delayed;
 };
 
@@ -76,10 +79,24 @@ static void cycle_dpi() {
     LOG_INF("cycle dpi");
 }
 
-static void activate_automouse_layer() {
+static void activate_automouse_layer_work(struct k_work *item) {
     zmk_keymap_layer_activate(config.automouse_layer);
-    LOG_INF("mouse layer activated");
+    LOG_INF("mouse layer activated (after idle wake)");
     data.automouse_enabled = true;
+}
+
+static void activate_automouse_layer() {
+    if (zmk_activity_get_state() != ZMK_ACTIVITY_ACTIVE) {
+        // Keyboard is idle/sleeping. Emit synthetic input event to wake it,
+        // then delay layer activation so activity system processes first.
+        input_report_rel(data.dev, INPUT_REL_MISC, 1, true, K_NO_WAIT);
+        k_work_schedule(&data.activate_automouse_layer_delayed, K_MSEC(50));
+        LOG_INF("waking from idle, delaying automouse activation");
+    } else {
+        zmk_keymap_layer_activate(config.automouse_layer);
+        LOG_INF("mouse layer activated");
+        data.automouse_enabled = true;
+    }
 }
 
 static void deactivate_automouse_layer(struct k_work *item) {
@@ -162,6 +179,7 @@ ZMK_SUBSCRIPTION(layer_state_listener, zmk_layer_state_changed);
 static int interface_init(const struct device *dev) {
     struct interface_data *data = dev->data;
 
+    k_work_init_delayable(&data->activate_automouse_layer_delayed, activate_automouse_layer_work);
     k_work_init_delayable(&data->deactivate_automouse_layer_delayed, deactivate_automouse_layer);
 
     return 0;
