@@ -10,4 +10,19 @@ config ZMK_HID_TRACKBALL_INTERFACE
 
 if ZMK_HID_TRACKBALL_INTERFACE
 
+config ZMK_HID_TRACKBALL_INTERFACE_FEATURE_CHANNEL
+    bool "Enable vendor HID feature report channel for host commands"
+    default y if USB_DEVICE_STACK
+    help
+      Registers a second USB HID interface (HID_1) with a vendor-defined
+      feature report. Allows the host to send automouse commands via
+      feature reports instead of LED output reports, bypassing KVM switches.
+
+if ZMK_HID_TRACKBALL_INTERFACE_FEATURE_CHANNEL
+
+config USB_HID_DEVICE_COUNT
+    default 2
+
+endif # ZMK_HID_TRACKBALL_INTERFACE_FEATURE_CHANNEL
+
 endif #ZMK_HID_TRACKBALL_INTERFACE

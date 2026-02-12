@@ -17,6 +17,11 @@
 #include <zmk/keymap.h>
 #include <zmk/activity.h>
 
+#if IS_ENABLED(CONFIG_ZMK_HID_TRACKBALL_INTERFACE_FEATURE_CHANNEL)
+#include <zephyr/usb/usb_device.h>
+#include <zephyr/usb/class/usb_hid.h>
+#endif
+
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
@@ -186,5 +191,63 @@ static int interface_init(const struct device *dev) {
 }
 
 DEVICE_DT_INST_DEFINE(0, &interface_init, NULL, &data, &config, POST_KERNEL, CONFIG_APPLICATION_INIT_PRIORITY, NULL);
+
+#if IS_ENABLED(CONFIG_ZMK_HID_TRACKBALL_INTERFACE_FEATURE_CHANNEL)
+
+static const uint8_t vendor_hid_report_desc[] = {
+    0x06, 0x00, 0xFF,  // Usage Page (Vendor Defined 0xFF00)
+    0x09, 0x01,        // Usage (Vendor Usage 1)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x01,        //   Report ID (1)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x26, 0xFF, 0x00,  //   Logical Maximum (255)
+    0x75, 0x08,        //   Report Size (8)
+    0x95, 0x01,        //   Report Count (1)
+    0xB1, 0x02,        //   Feature (Data, Variable, Absolute)
+    0xC0,              // End Collection
+};
+
+static const struct device *vendor_hid_dev;
+
+static int vendor_set_report_cb(const struct device *dev,
+                                struct usb_setup_packet *setup,
+                                int32_t *len, uint8_t **buf) {
+    if (*len < 2) {
+        return -EINVAL;
+    }
+    uint8_t report_data = (*buf)[1]; // byte after report ID
+
+    if (report_data & LED_SLCK) {
+        if (!data.automouse_enabled && !zmk_keymap_layer_active(config.automouse_layer)) {
+            activate_automouse_layer();
+        } else if (k_work_delayable_is_pending(&data.deactivate_automouse_layer_delayed)) {
+            k_work_cancel_delayable(&data.deactivate_automouse_layer_delayed);
+        }
+    } else if (data.automouse_enabled) {
+        k_work_reschedule(&data.deactivate_automouse_layer_delayed,
+                          K_MSEC(config.automouse_layer_timeout_ms));
+    }
+    return 0;
+}
+
+static const struct hid_ops vendor_ops = {
+    .set_report = vendor_set_report_cb,
+};
+
+static int vendor_hid_init(void) {
+    vendor_hid_dev = device_get_binding("HID_1");
+    if (!vendor_hid_dev) {
+        LOG_ERR("Cannot find HID_1 device");
+        return -ENODEV;
+    }
+    usb_hid_register_device(vendor_hid_dev, vendor_hid_report_desc,
+                            sizeof(vendor_hid_report_desc), &vendor_ops);
+    usb_hid_init(vendor_hid_dev);
+    return 0;
+}
+
+SYS_INIT(vendor_hid_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
+
+#endif /* CONFIG_ZMK_HID_TRACKBALL_INTERFACE_FEATURE_CHANNEL */
 
 #endif
